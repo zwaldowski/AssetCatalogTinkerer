@@ -12,11 +12,11 @@ class MainWindowController: NSWindowController {
 
     @IBOutlet weak var searchField: NSSearchField!
     
-    @IBAction func enableSearchField(_ sender: AnyObject?) {
+    @IBAction func enableSearchField(_ sender: Any?) {
         searchField.isEnabled = true
     }
     
-    @IBAction func disableSearchField(_ sender: AnyObject?) {
+    @IBAction func disableSearchField(_ sender: Any?) {
         searchField.isEnabled = false
     }
     

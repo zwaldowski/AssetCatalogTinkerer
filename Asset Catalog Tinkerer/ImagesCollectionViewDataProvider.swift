@@ -33,7 +33,7 @@ class ImagesCollectionViewDataProvider: NSObject, NSCollectionViewDataSource, NS
         }
     }
     
-    var images = [[String: NSObject]]() {
+    var images = [[AssetCatalogImageKey: Any]]() {
         didSet {
             filteredImages = filterImagesWithCurrentSearchTerm()
             collectionView.reloadData()
@@ -47,13 +47,13 @@ class ImagesCollectionViewDataProvider: NSObject, NSCollectionViewDataSource, NS
         }
     }
     
-    var filteredImages = [[String: NSObject]]()
+    var filteredImages = [[AssetCatalogImageKey: Any]]()
     
-    fileprivate func filterImagesWithCurrentSearchTerm() -> [[String: NSObject]] {
+    fileprivate func filterImagesWithCurrentSearchTerm() -> [[AssetCatalogImageKey: Any]] {
         guard !searchTerm.isEmpty else { return images }
         
         let predicate = NSPredicate(format: "name contains[cd] %@", searchTerm)
-        return (images as NSArray).filtered(using: predicate) as! [[String: NSObject]]
+        return (images as NSArray).filtered(using: predicate) as! [[AssetCatalogImageKey: Any]]
     }
     
     func numberOfSections(in collectionView: NSCollectionView) -> Int {
@@ -63,7 +63,7 @@ class ImagesCollectionViewDataProvider: NSObject, NSCollectionViewDataSource, NS
     func collectionView(_ collectionView: NSCollectionView, itemForRepresentedObjectAt indexPath: IndexPath) -> NSCollectionViewItem {
         let item = collectionView.makeItem(withIdentifier: .imageItemIdentifier, for: indexPath) as! ImageCollectionViewItem
         
-        item.image = filteredImages[(indexPath as NSIndexPath).item]
+        item.image = filteredImages[indexPath.item]
         
         return item
     }
@@ -73,23 +73,23 @@ class ImagesCollectionViewDataProvider: NSObject, NSCollectionViewDataSource, NS
     }
     
     func collectionView(_ collectionView: NSCollectionView, writeItemsAt indexPaths: Set<IndexPath>, to pasteboard: NSPasteboard) -> Bool {
-        pasteboard.clearContents()
-        
-        let images: [String?] = indexPaths.map { indexPath in
-            let index = (indexPath as NSIndexPath).item
-            
-            guard let filename = self.filteredImages[index]["filename"] as? String else { return nil }
-            guard let data = self.filteredImages[index]["png"] as? Data else { return nil }
-            let tempURL = URL(fileURLWithPath: "\(NSTemporaryDirectory())\(filename)")
-            
-            guard (try? data.write(to: tempURL, options: [.atomic])) != nil else { return nil }
-            
-            return tempURL.path
+        let images = indexPaths.compactMap { (indexPath) -> URL? in
+            let index = indexPath.item
+
+            guard let filename = self.filteredImages[index][.filename] as? String,
+                let data = self.filteredImages[index][.pngData] as? Data else { return nil }
+
+            let tempURL = FileManager.default.temporaryDirectory.appendingPathComponent(filename)
+            do {
+                try data.write(to: tempURL)
+            } catch {
+                return nil
+            }
+            return tempURL
         }
-        
-        let validImages: [String] = images.filter { $0 != nil }.map { $0! }
-        
-        pasteboard.setFilenamesPropertyListWithFilenames(validImages)
+
+        pasteboard.clearContents()
+        pasteboard.writeObjects(images as [NSURL])
         
         return true
     }

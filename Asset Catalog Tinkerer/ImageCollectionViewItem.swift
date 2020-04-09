@@ -32,7 +32,7 @@ class ImageCollectionViewItem: NSCollectionViewItem {
         static let brightImageThreshold: CGFloat = 0.8
     }
     
-    var image: [String: NSObject]? {
+    var image: [AssetCatalogImageKey: Any]? {
         didSet {
             updateUI()
         }
@@ -118,7 +118,6 @@ class ImageCollectionViewItem: NSCollectionViewItem {
         view.addSubview(nameLabel)
         nameLabel.bottomAnchor.constraint(equalTo: view.bottomAnchor, constant: -2.0).isActive = true
         nameLabel.centerXAnchor.constraint(equalTo: view.centerXAnchor).isActive = true
-        nameLabel.widthAnchor.constraint(lessThanOrEqualTo: view.widthAnchor, multiplier: 1.0, constant: -12.0)
     }
     
     private func installBrightnessDebugLabelIfNeeded() {
@@ -130,10 +129,10 @@ class ImageCollectionViewItem: NSCollectionViewItem {
     }
     
     fileprivate func updateUI() {
-        guard let imageData = image , isViewLoaded else { return }
-        guard let image = imageData["thumbnail"] as? NSImage else { return }
-        let name = imageData["name"] as! String
-        let filename = imageData["filename"] as! String
+        guard let imageData = image, isViewLoaded else { return }
+        guard let image = imageData[.thumbnail] as? NSImage else { return }
+        let name = imageData[.name] as! String
+        let filename = imageData[.filename] as! String
         
         let brightness = image.averageBrightness()
         

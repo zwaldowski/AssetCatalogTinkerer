@@ -82,26 +82,11 @@ struct _renditionkeytoken {
 @property (nonatomic, readonly) NSString *name;
 @property (nonatomic, readonly) NSData *data;
 @property (nonatomic, readonly) CGImageRef unslicedImage;
+@property (nonatomic, readonly) CGPDFDocumentRef pdfDocument;
 
 @end
 
 @interface CUICommonAssetStorage: NSObject
-{
-    struct _carheader {
-        unsigned int _field1;
-        unsigned int _field2;
-        unsigned int _field3;
-        unsigned int _field4;
-        unsigned int _field5;
-        char _field6[128];
-        char _field7[256];
-        unsigned char _field8[16];
-        unsigned int _field9;
-        unsigned int _field10;
-        unsigned int _field11;
-        unsigned int _field12;
-    } *_header;
-}
 
 @property (readonly) NSArray <CUIRenditionKey *> *allAssetKeys;
 

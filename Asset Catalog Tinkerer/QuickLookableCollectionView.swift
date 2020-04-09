@@ -77,9 +77,7 @@ class QuickLookableCollectionView: NSCollectionView {
     var collectionView: QuickLookableCollectionView!
     
     var previewItems: [URL] {
-        guard let items = pasteboard.filenamesPropertyList() else { return [] }
-        
-        return items.map { URL(fileURLWithPath: $0) }
+        pasteboard.readObjects(forClasses: [ NSURL.self ], options: [.urlReadingFileURLsOnly: true]) as? [URL] ?? []
     }
     
     @objc fileprivate func numberOfPreviewItems(in panel: QLPreviewPanel!) -> Int {

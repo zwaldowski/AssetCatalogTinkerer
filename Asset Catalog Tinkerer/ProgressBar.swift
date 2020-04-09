@@ -8,78 +8,92 @@
 
 import Cocoa
 
-open class ProgressBar: NSView {
+class ProgressBar: NSView {
 
-    override public init(frame frameRect: NSRect) {
-        super.init(frame: frameRect)
-        
-        commonInit()
-    }
+    private static var observationContext = false
+    private let progressLayer = CALayer()
+    private var animateOnNextUpdateLayer = false
+
+    // MARK: -
     
-    required public init?(coder: NSCoder) {
-        super.init(coder: coder)
-        
-        commonInit()
-    }
-    
-    override open func awakeFromNib() {
-        super.awakeFromNib()
-        
-        commonInit()
-    }
-    
-    open var tintColor: NSColor? {
+    var tintColor: NSColor? {
         didSet {
-            CATransaction.begin()
-            CATransaction.setAnimationDuration(0.0)
-            progressLayer.backgroundColor = tintColor?.cgColor
-            CATransaction.commit()
+            needsDisplay = true
         }
     }
     
-    open var progress: Double = 0.0 {
+    var progress: Double = 0.0 {
         didSet {
-            let animated = oldValue < progress
-            
-            DispatchQueue.main.async { self.updateProgressLayer(animated) }
+            animateOnNextUpdateLayer = oldValue < progress
+            needsDisplay = true
         }
     }
-    
-    fileprivate var progressLayer: CALayer!
-    
-    fileprivate func commonInit() {
-        guard progressLayer == nil else { return }
-        
-        wantsLayer = true
-        layer = CALayer()
-        
-        progressLayer = CALayer()
-        progressLayer.backgroundColor = tintColor?.cgColor
-        progressLayer.frame = NSRect(x: 0.0, y: 0.0, width: 0.0, height: bounds.height)
-        layer!.addSublayer(progressLayer)
-        progressLayer.autoresizingMask = [.layerWidthSizable, .layerHeightSizable]
-        
-        updateProgressLayer()
+
+    var observedProgress: Progress? {
+        didSet {
+            guard observedProgress != oldValue else { return }
+            oldValue?.removeObserver(self, forKeyPath: #keyPath(Progress.fractionCompleted), context: &Self.observationContext)
+            observedProgress?.addObserver(self, forKeyPath: #keyPath(Progress.fractionCompleted), context: &Self.observationContext)
+            if let observedProgress = observedProgress {
+                update(for: observedProgress)
+            }
+        }
     }
+
+    // MARK: - NSView
+
+    override var wantsUpdateLayer: Bool { true }
+
+    override func updateLayer() {
+        if progressLayer.superlayer == nil {
+            progressLayer.frame = bounds
+            progressLayer.autoresizingMask = [.layerWidthSizable, .layerHeightSizable]
+            layer!.addSublayer(progressLayer)
+        }
+        updateProgressLayer(animated: animateOnNextUpdateLayer)
+        animateOnNextUpdateLayer = false
+    }
+
+    override var intrinsicContentSize: NSSize {
+        NSSize(width: NSView.noIntrinsicMetric, height: 3)
+    }
+
+    override func observeValue(forKeyPath keyPath: String?, of object: Any?, change: [NSKeyValueChangeKey : Any]?, context: UnsafeMutableRawPointer?) {
+        guard context == &Self.observationContext, let observedProgress = object as? Progress else {
+            return super.observeValue(forKeyPath: keyPath, of: object, change: change, context: context)
+        }
+        update(for: observedProgress)
+    }
+
+    // MARK: -
     
-    fileprivate var widthForProgressLayer: CGFloat {
+    private var widthForProgressLayer: CGFloat {
         return bounds.width * CGFloat(progress)
     }
     
-    fileprivate func updateProgressLayer(_ animated: Bool = true) {
+    private func updateProgressLayer(animated: Bool) {
         CATransaction.begin()
-        CATransaction.setAnimationDuration(animated ? 0.4 : 0.0)
-        var frame = progressLayer.frame
-        frame.size.width = widthForProgressLayer
-        progressLayer.frame = frame
+        CATransaction.setAnimationDuration(animateOnNextUpdateLayer ? 0.4 : 0.0)
+        defer { CATransaction.commit() }
+
+        progressLayer.backgroundColor = (tintColor ?? .controlAccentColor).cgColor
+        progressLayer.frame.size.width = widthForProgressLayer
         
         if progress >= 0.99 {
             progressLayer.opacity = 0.0
         } else {
             progressLayer.opacity = 1.0
         }
-        
-        CATransaction.commit()
+    }
+
+    private func update(for observedProgress: Progress) {
+        if Thread.isMainThread, observedProgress == self.observedProgress {
+            progress = observedProgress.fractionCompleted
+        } else {
+            DispatchQueue.main.async {
+                self.update(for: observedProgress)
+            }
+        }
     }
     
 }

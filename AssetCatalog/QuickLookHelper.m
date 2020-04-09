@@ -14,10 +14,11 @@
 
 @interface QuickLookHelper ()
 
-@property (nonatomic, assign, getter=isFinished) BOOL isFinished;
-
 @property (nonatomic, strong) AssetCatalogReader *reader;
-@property (nonatomic, assign) CGSize size;
+@property (nonatomic) CGSize size;
+@property (nonatomic) NSProgress *progress;
+@property (nonatomic, copy) NSArray *images;
+@property (nonatomic) NSUInteger totalNumberOfAssets;
 
 @end
 
@@ -29,7 +30,7 @@
                                         maxSize:(CGSize)maxSize
 {
     QuickLookHelper *generator = [[QuickLookHelper alloc] initWithURL:(__bridge NSURL *)url size:NSMakeSize(500, 700)];
-    
+
     [generator generatePreview];
     
     while (!generator.isFinished) {
@@ -44,8 +45,8 @@
     }
     
     if (!ctx) return -1;
-    
-    NSGraphicsContext *graphicsContext = [NSGraphicsContext graphicsContextWithGraphicsPort:(void *)ctx flipped:NO];
+
+    NSGraphicsContext *graphicsContext = [NSGraphicsContext graphicsContextWithCGContext:(CGContextRef)ctx flipped:NO];
     [NSGraphicsContext setCurrentContext:graphicsContext];
     
     [generator drawPreview];
@@ -69,17 +70,23 @@
     return self;
 }
 
+- (BOOL)isFinished {
+    return self.images != nil;
+}
+
 - (void)generatePreview
 {
     __weak typeof(self) weakSelf = self;
-    [self.reader resourceConstrainedReadWithMaxCount:kMaxNumberOfAssets completionHandler:^{
-        weakSelf.isFinished = YES;
+    self.progress = [self.reader resourceConstrainedReadWithMaxCount:kMaxNumberOfAssets completionHandler:^(NSArray *images, NSUInteger count, NSError *error) {
+        __strong typeof(weakSelf) self = weakSelf;
+        self.totalNumberOfAssets = count;
+        self.images = images ?: @[];
     }];
 }
 
 - (void)cancel
 {
-    [self.reader cancelReading];
+    [self.progress cancel];
 }
 
 #define kCellMargin 28.0f
@@ -125,7 +132,7 @@
     CGFloat y = 0;
     CGFloat lastRowHeight = 0;
     
-    for (NSDictionary *asset in self.reader.images) {
+    for (NSDictionary *asset in self.images) {
         NSBitmapImageRep *rep = asset[kACSImageRepKey];
         
         NSSize size = [self fitSize:rep.size inSize:referenceSize];
@@ -176,13 +183,13 @@
     
     // draw summary text
     
-    unsigned long readCount = MIN(self.reader.totalNumberOfAssets, totalAssetsDrawn);
+    unsigned long readCount = MIN(self.totalNumberOfAssets, totalAssetsDrawn);
     
     NSDictionary *attrs = @{
                             NSFontAttributeName: [NSFont systemFontOfSize:12.0 weight:NSFontWeightMedium],
                             NSForegroundColorAttributeName: [NSColor grayColor]
                             };
-    NSString *info = [NSString stringWithFormat:@"Previewing %lu of %lu assets", readCount, (unsigned long)self.reader.totalNumberOfAssets];
+    NSString *info = [NSString stringWithFormat:@"Previewing %lu of %lu assets", readCount, (unsigned long)self.totalNumberOfAssets];
     NSAttributedString *summary = [[NSAttributedString alloc] initWithString:info attributes:attrs];
     
     CGFloat tw = summary.size.width;
@@ -231,10 +238,10 @@
 
 - (NSSize)medianImageSize
 {
-    NSMutableArray <NSNumber *> *widths = [[NSMutableArray alloc] initWithCapacity:self.reader.images.count];
-    NSMutableArray <NSNumber *> *heights = [[NSMutableArray alloc] initWithCapacity:self.reader.images.count];
+    NSMutableArray <NSNumber *> *widths = [[NSMutableArray alloc] initWithCapacity:self.images.count];
+    NSMutableArray <NSNumber *> *heights = [[NSMutableArray alloc] initWithCapacity:self.images.count];
     
-    [self.reader.images enumerateObjectsUsingBlock:^(NSDictionary* asset, NSUInteger idx, BOOL *stop) {
+    [self.images enumerateObjectsUsingBlock:^(AssetCatalogImage asset, NSUInteger idx, BOOL *stop) {
         NSBitmapImageRep *rep = asset[kACSImageRepKey];
         [widths addObject:@(rep.size.width)];
         [heights addObject:@(rep.size.height)];
@@ -243,6 +250,23 @@
     NSNumber *medianWidth = [self medianValueInArray:widths];
     NSNumber *medianHeight = [self medianValueInArray:heights];
     
+    return NSMakeSize(round(medianWidth.doubleValue), round(medianHeight.doubleValue));
+}
+
+- (NSSize)medianImageSizeFromImages:(NSArray *)images
+{
+    NSMutableArray <NSNumber *> *widths = [[NSMutableArray alloc] initWithCapacity:images.count];
+    NSMutableArray <NSNumber *> *heights = [[NSMutableArray alloc] initWithCapacity:images.count];
+
+    [images enumerateObjectsUsingBlock:^(AssetCatalogImage asset, NSUInteger idx, BOOL *stop) {
+        NSBitmapImageRep *rep = asset[kACSImageRepKey];
+        [widths addObject:@(rep.size.width)];
+        [heights addObject:@(rep.size.height)];
+    }];
+
+    NSNumber *medianWidth = [self medianValueInArray:widths];
+    NSNumber *medianHeight = [self medianValueInArray:heights];
+
     return NSMakeSize(round(medianWidth.doubleValue), round(medianHeight.doubleValue));
 }
 

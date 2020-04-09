@@ -9,36 +9,30 @@
 import Cocoa
 
 class ImagesViewController: NSViewController, NSMenuItemValidation {
-    
-    var loadProgress = 0.0 {
+
+    var progress: Progress? {
         didSet {
-            progressBar.progress = loadProgress
-            if loadProgress >= 0.99 && error == nil {
-                hideStatus()
-                showSpinner()
-            }
+            progressBar.observedProgress = progress
         }
     }
     
-    var error: NSError? = nil {
+    var error: Error? {
         didSet {
             guard let error = error else { return }
-            
-            loadProgress = 1.0
+            progress = nil
+            dataProvider.images = []
             showStatus(error.localizedDescription)
-            
             tellWindowControllerToDisableSearchField()
         }
     }
     
-    fileprivate var dataProvider = ImagesCollectionViewDataProvider()
+    private var dataProvider = ImagesCollectionViewDataProvider()
     
-    var images = [[String: NSObject]]() {
+    var images = [[AssetCatalogImageKey: Any]]() {
         didSet {
-            loadProgress = 1.0
+            progress = nil
             dataProvider.images = images
-            hideSpinner()
-            
+            hideStatus()
             tellWindowControllerToEnableSearchField()
         }
     }
@@ -46,37 +40,16 @@ class ImagesViewController: NSViewController, NSMenuItemValidation {
     override func viewDidLoad() {
         super.viewDidLoad()
 
-        view.layer?.backgroundColor = NSColor.white.cgColor
         buildUI()
         showStatus("Extracting Images...")
     }
     
     // MARK: - UI
     
-    fileprivate lazy var progressBar: ProgressBar = {
-        let p = ProgressBar(frame: NSZeroRect)
-        
-        p.translatesAutoresizingMaskIntoConstraints = false
-        p.tintColor = NSColor(calibratedRed:0, green:0.495, blue:1, alpha:1)
-        p.progress = 0.0
-        
-        return p
-    }()
-    
-    fileprivate lazy var spinner: NSProgressIndicator = {
-        let p = NSProgressIndicator(frame: NSZeroRect)
-        
-        p.translatesAutoresizingMaskIntoConstraints = false
-        p.controlSize = .regular
-        p.style = .spinning
-        p.isDisplayedWhenStopped = false
-        p.isIndeterminate = true
-        
-        return p
-    }()
-    
+    private lazy var progressBar = ProgressBar()
+
     fileprivate lazy var statusLabel: NSTextField = {
-        let l = NSTextField(frame: NSZeroRect)
+        let l = NSTextField()
         
         l.translatesAutoresizingMaskIntoConstraints = false
         l.isBordered = false
@@ -85,34 +58,18 @@ class ImagesViewController: NSViewController, NSMenuItemValidation {
         l.isSelectable = false
         l.drawsBackground = false
         l.font = NSFont.systemFont(ofSize: 12.0, weight: .medium)
-        l.textColor = NSColor.secondaryLabelColor
+        l.textColor = .secondaryLabelColor
         l.lineBreakMode = .byTruncatingTail
-        
+
         l.alphaValue = 0.0
         
         return l
     }()
     
-    fileprivate lazy var scrollView: NSScrollView = {
-        let s = NSScrollView(frame: NSZeroRect)
-        
-        s.translatesAutoresizingMaskIntoConstraints = false
-        s.hasVerticalScroller = true
-        s.borderType = .noBorder
-        
-        return s
-    }()
+    private lazy var scrollView = NSScrollView()
+    private lazy var collectionView = QuickLookableCollectionView()
     
-    fileprivate lazy var collectionView: QuickLookableCollectionView = {
-        let c = QuickLookableCollectionView(frame: NSZeroRect)
-        
-        c.isSelectable = true
-        c.allowsMultipleSelection = true
-        
-        return c
-    }()
-    
-    fileprivate lazy var exportProgressView: NSVisualEffectView = {
+    private lazy var exportProgressView: NSVisualEffectView = {
         let vfxView = NSVisualEffectView(frame: NSZeroRect)
         
         vfxView.translatesAutoresizingMaskIntoConstraints = false
@@ -137,41 +94,30 @@ class ImagesViewController: NSViewController, NSMenuItemValidation {
         return vfxView
     }()
     
-    fileprivate func showSpinner() {
-        if spinner.superview == nil {
-            view.addSubview(spinner)
-            spinner.centerYAnchor.constraint(equalTo: view.centerYAnchor).isActive = true
-            spinner.centerXAnchor.constraint(equalTo: view.centerXAnchor).isActive = true
-        }
-        
-        spinner.startAnimation(nil)
-    }
-    
-    fileprivate func hideSpinner() {
-        spinner.stopAnimation(nil)
-    }
-    
-    fileprivate func buildUI() {
-        scrollView.frame = view.bounds
+    private func buildUI() {
+        scrollView.translatesAutoresizingMaskIntoConstraints = false
+        scrollView.borderType = .noBorder
+        scrollView.hasVerticalScroller = true
         view.addSubview(scrollView)
-        
-        scrollView.topAnchor.constraint(equalTo: view.topAnchor).isActive = true
-        scrollView.bottomAnchor.constraint(equalTo: view.bottomAnchor).isActive = true
-        scrollView.leadingAnchor.constraint(equalTo: view.leadingAnchor).isActive = true
-        scrollView.trailingAnchor.constraint(equalTo: view.trailingAnchor).isActive = true
-        
-        collectionView.frame = scrollView.bounds
-        scrollView.documentView = collectionView
-        
+
+        collectionView.isSelectable = true
+        collectionView.allowsMultipleSelection = true
         dataProvider.collectionView = collectionView
-        
-        progressBar.frame = NSRect(x: 0.0, y: view.bounds.height - 3.0, width: view.bounds.width, height: 3.0)
-        progressBar.heightAnchor.constraint(equalToConstant: 3.0).isActive = true
+        scrollView.documentView = collectionView
+
+        progressBar.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(progressBar)
-        
-        progressBar.topAnchor.constraint(equalTo: view.topAnchor).isActive = true
-        progressBar.leadingAnchor.constraint(equalTo: view.leadingAnchor).isActive = true
-        progressBar.trailingAnchor.constraint(equalTo: view.trailingAnchor).isActive = true
+
+        NSLayoutConstraint.activate([
+            scrollView.topAnchor.constraint(equalTo: view.topAnchor),
+            scrollView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+            scrollView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            scrollView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+
+            progressBar.topAnchor.constraint(equalTo: view.topAnchor),
+            progressBar.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            progressBar.trailingAnchor.constraint(equalTo: view.trailingAnchor)
+        ])
     }
     
     fileprivate func showExportProgress() {
@@ -190,7 +136,7 @@ class ImagesViewController: NSViewController, NSMenuItemValidation {
         NSAnimationContext.runAnimationGroup({ ctx in
             ctx.duration = 0.4
             self.exportProgressView.animator().alphaValue = 1.0
-            }, completionHandler: nil)
+        })
     }
     
     fileprivate func hideExportProgress() {
@@ -199,8 +145,8 @@ class ImagesViewController: NSViewController, NSMenuItemValidation {
         NSAnimationContext.runAnimationGroup({ ctx in
             ctx.duration = 0.4
             self.exportProgressView.animator().alphaValue = 0.0
-            }, completionHandler: {
-                self.exportProgressView.isHidden = true
+        }, completionHandler: {
+            self.exportProgressView.isHidden = true
         })
     }
     
@@ -216,15 +162,15 @@ class ImagesViewController: NSViewController, NSMenuItemValidation {
         NSAnimationContext.runAnimationGroup({ ctx in
             ctx.duration = 0.4
             self.statusLabel.animator().alphaValue = 1.0
-            }, completionHandler: nil)
+        })
     }
     
     fileprivate func hideStatus() {
         NSAnimationContext.runAnimationGroup({ ctx in
             ctx.duration = 0.4
             self.statusLabel.animator().alphaValue = 0.0
-            }, completionHandler: {
-                self.statusLabel.isHidden = true
+        }, completionHandler: {
+            self.statusLabel.isHidden = true
         })
     }
     
@@ -239,18 +185,17 @@ class ImagesViewController: NSViewController, NSMenuItemValidation {
     }
     
     fileprivate func tellWindowControllerToEnableSearchField() {
-        NSApp.sendAction(#selector(MainWindowController.enableSearchField(_:)), to: nil, from: self)
+        NSApp.sendAction(#selector(MainWindowController.enableSearchField), to: nil, from: self)
     }
     
     fileprivate func tellWindowControllerToDisableSearchField() {
-        NSApp.sendAction(#selector(MainWindowController.disableSearchField(_:)), to: nil, from: self)
+        NSApp.sendAction(#selector(MainWindowController.disableSearchField), to: nil, from: self)
     }
     
     // MARK: - Export
     
-    func copy(_ sender: AnyObject) {
-        guard collectionView.selectionIndexPaths.count > 0 else { return }
-
+    func copy(_ sender: Any?) {
+        guard !collectionView.selectionIndexPaths.isEmpty else { return }
         _ = dataProvider.collectionView(collectionView, writeItemsAt: collectionView.selectionIndexPaths, to: .general)
     }
     
@@ -264,10 +209,11 @@ class ImagesViewController: NSViewController, NSMenuItemValidation {
         launchExportPanel()
     }
     
-    fileprivate var imagesToExport: [[String: NSObject]]?
+    fileprivate var imagesToExport: [[AssetCatalogImageKey: Any]]?
     
     fileprivate func launchExportPanel() {
-        guard let imagesToExport = imagesToExport else { return }
+        guard let imagesToExport = imagesToExport,
+            let window = view.window else { return }
         
         let panel = NSOpenPanel()
         panel.prompt = "Export"
@@ -276,30 +222,28 @@ class ImagesViewController: NSViewController, NSMenuItemValidation {
         panel.canChooseDirectories = true
         panel.canCreateDirectories = true
         
-        panel.beginSheetModal(for: view.window!) { result in
-            guard result == .OK else { return }
-            guard panel.url != nil else { return }
+        panel.beginSheetModal(for: window) { result in
+            guard result == .OK,
+                let url = panel.url else { return }
             
-            self.exportImages(imagesToExport, toDirectoryAt: panel.url!)
+            self.exportImages(imagesToExport, toDirectoryAt: url)
         }
     }
     
-    fileprivate func exportImages(_ images: [[String: NSObject]], toDirectoryAt url: URL) {
+    fileprivate func exportImages(_ images: [[AssetCatalogImageKey: Any]], toDirectoryAt url: URL) {
         showExportProgress()
         
-        DispatchQueue.global(qos: DispatchQoS.QoSClass.userInitiated).async {
+        DispatchQueue.global(qos: .userInitiated).async {
             images.forEach { image in
-                guard let filename = image["filename"] as? String else { return }
+                guard let filename = image[.filename] as? String,
+                    let pngData = image[.pngData] as? Data else { return }
+
+                let url = url.appendingPathComponent(filename)
                 
-                var pathComponents = url.pathComponents
-                
-                pathComponents.append(filename)
-                
-                guard let pngData = image["png"] as? Data else { return }
-                
-                let path = NSString.path(withComponents: pathComponents) as String
-                if !((try? pngData.write(to: URL(fileURLWithPath: path), options: [.atomic])) != nil) {
-                    NSLog("ERROR: Unable to write \(filename) to \(path)")
+                do {
+                    try pngData.write(to: url, options: .atomic)
+                } catch {
+                    NSLog("ERROR: Unable to write \(filename) to \(url)")
                 }
             }
             
@@ -309,28 +253,16 @@ class ImagesViewController: NSViewController, NSMenuItemValidation {
         }
     }
     
-    fileprivate enum MenuItemTags: Int {
-        case exportAllImages = 1001
-        case exportSelectedImages = 1002
-    }
-    
     func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
-        if NSStringFromSelector(menuItem.action!) == "copy:" {
-            return collectionView.selectionIndexPaths.count > 0
-        }
-
-        guard let semanticMenuItem = MenuItemTags(rawValue: menuItem.tag) else {
+        switch menuItem.action {
+        case #selector(NSText.copy(_:)), #selector(exportSelectedImages):
+            return !collectionView.selectionIndexPaths.isEmpty
+        case #selector(exportAllImages):
+            return !images.isEmpty
+        default:
             return false
         }
-
-        switch semanticMenuItem {
-        case .exportAllImages:
-            return images.count > 0
-        case .exportSelectedImages:
-            return collectionView.selectionIndexes.count > 0
-        }
     }
-
 
 }
 

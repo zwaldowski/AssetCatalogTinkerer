@@ -23,14 +23,12 @@ NSString * const kAssetCatalogReaderErrorDomain = @"br.com.guilhermerambo.AssetC
 @interface AssetCatalogReader ()
 
 @property (nonatomic, copy) NSURL *fileURL;
-@property (nonatomic, strong) CUICatalog *catalog;
-@property (nonatomic, strong) NSMutableArray <NSDictionary <NSString *, NSObject *> *> *mutableImages;
-
-@property (assign) NSUInteger totalNumberOfAssets;
 
 // These properties are set when the read is initiated by a call to `resourceConstrainedReadWithMaxCount`
-@property (nonatomic, assign, getter=isResourceConstrained) BOOL resourceConstrained;
-@property (nonatomic, assign) int maxCount;
+@property (nonatomic, getter=isResourceConstrained) BOOL resourceConstrained;
+@property (nonatomic) int64_t maxCount;
+
+@property (nonatomic) NSMutableArray *loadedCatalogs;
 
 @end
 
@@ -46,248 +44,215 @@ NSString * const kAssetCatalogReaderErrorDomain = @"br.com.guilhermerambo.AssetC
     
     _ignorePackedAssets = YES;
     _fileURL = [URL copy];
+    _loadedCatalogs = [[NSMutableArray alloc] init];
     
     return self;
 }
 
-- (NSMutableArray <NSDictionary <NSString *, NSObject *> *> *)mutableImages
-{
-    if (!_mutableImages) _mutableImages = [NSMutableArray new];
-    
-    return _mutableImages;
-}
-
-- (NSArray <NSDictionary <NSString *, NSObject *> *> *)images
-{
-    return [self.mutableImages copy];
-}
-
-- (void)cancelReading
-{
-    self.cancelled = true;
-}
-
-- (void)resourceConstrainedReadWithMaxCount:(int)max completionHandler:(void (^)(void))callback
-{
+- (NSProgress *)resourceConstrainedReadWithMaxCount:(int64_t)max completionHandler:(AssetCatalogReaderCompletionHandler)callback {
     self.resourceConstrained = YES;
     self.maxCount = max;
-    
-    [self readWithCompletionHandler:callback progressHandler:nil];
+
+    return [self readWithCompletionHandler:callback];
 }
 
-- (void)readWithCompletionHandler:(void (^__nonnull)(void))callback progressHandler:(void (^__nullable)(double progress))progressCallback
-{
-    __block uint64 totalItemCount = 0;
-    __block uint64 loadedItemCount = 0;
-    __block uint64 maxItemCount = _maxCount;
-    
-    NSString *catalogPath = self.fileURL.path;
-    
-    if (!_resourceConstrained) {
-        // we need to figure out if the user selected an app bundle or a specific .car file
-        NSBundle *bundle = [NSBundle bundleWithURL:self.fileURL];
-        if (!bundle) {
-            catalogPath = self.fileURL.path;
-            self.catalogName = catalogPath.lastPathComponent;
+- (NSProgress *)readWithCompletionHandler:(AssetCatalogReaderCompletionHandler)callback {
+    NSProgress *progress = [NSProgress discreteProgressWithTotalUnitCount:-1];
+
+    dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+        NSURL *catalogURL = self.fileURL;
+        if (!self.resourceConstrained) {
+            // we need to figure out if the user selected an app bundle or a specific .car file
+            NSBundle *bundle = [NSBundle bundleWithURL:catalogURL];
+            if (bundle) {
+                catalogURL = [bundle URLForResource:@"Assets" withExtension:@"car"];
+            }
+        }
+
+        // bundle is nil for some reason
+        if (!catalogURL) {
+            NSError *error = [NSError errorWithDomain:kAssetCatalogReaderErrorDomain code:kAssetCatalogReaderErrorCouldNotOpenCatalog userInfo:@{NSLocalizedDescriptionKey: @"Unable to find asset catalog path"}];
+            dispatch_async(dispatch_get_main_queue(), ^{
+                callback(nil, 0, error);
+            });
+            return;
+        }
+
+        if ([self isProThemeStoreAtURL:catalogURL]) {
+            NSError *error = [NSError errorWithDomain:kAssetCatalogReaderErrorDomain code:kAssetCatalogReaderErrorIncompatibleCatalog userInfo:@{NSLocalizedDescriptionKey: @"Pro asset catalogs are not supported"}];
+            dispatch_async(dispatch_get_main_queue(), ^{
+                callback(nil, 0, error);
+            });
+            return;
+        }
+
+        NSError *catalogError;
+        CUICatalog *catalog = [[CUICatalog alloc] initWithURL:catalogURL error:&catalogError];
+        if (!catalog) {
+            dispatch_async(dispatch_get_main_queue(), ^{
+                callback(nil, 0, catalogError);
+            });
+            return;
+        }
+
+        if (!self.distinguishCatalogsFromThemeStores || !catalog.allImageNames.count || ![catalog respondsToSelector:@selector(imageWithName:scaleFactor:)]) {
+            // CAR is a theme file not an asset catalog
+            [self readThemeStore:catalog updatingProgress:progress completionHandler:callback];
         } else {
-            catalogPath = [bundle pathForResource:@"Assets" ofType:@"car"];
-            self.catalogName = [NSString stringWithFormat:@"%@ | %@", bundle.bundlePath.lastPathComponent, catalogPath.lastPathComponent];
+            [self readCatalog:catalog updatingProgress:progress completionHandler:callback];
+        }
+    });
+
+    return progress;
+}
+
+- (void)readCatalog:(CUICatalog *)catalog updatingProgress:(NSProgress *)progress completionHandler:(AssetCatalogReaderCompletionHandler)callback {
+    // limits the total items to be read to the total number of images or the max count set for a resource constrained read
+    NSUInteger totalNumberOfAssets = catalog.allImageNames.count;
+    int64_t totalItemCount = self.resourceConstrained ? MIN(self.maxCount, totalNumberOfAssets) : totalNumberOfAssets;
+    NSMutableArray *mutableImages = [NSMutableArray arrayWithCapacity:totalItemCount];
+    NSArray *imageNames = [catalog.allImageNames subarrayWithRange:NSMakeRange(0, totalItemCount)];
+
+    progress.totalUnitCount = totalItemCount;
+
+    __block int hasRetinaContentCacheStatus = -1;
+    BOOL(^cachedHasRetinaContent)(void) = ^BOOL{
+        if (hasRetinaContentCacheStatus == -1) {
+            hasRetinaContentCacheStatus = [self catalogHasRetinaContent:catalog];
+        }
+        return !!hasRetinaContentCacheStatus;
+    };
+
+    for (NSString *imageName in imageNames) {
+        for (CUINamedImage *namedImage in [self imagesNamed:imageName fromCatalog:catalog]) {
+            if (progress.cancelled) return;
+
+            [progress performAsCurrentWithPendingUnitCount:1 usingBlock:^{ @autoreleasepool {
+                if (namedImage == nil || [namedImage isKindOfClass:[CUINamedData class]]) {
+                    return;
+                }
+
+                NSString *filename;
+                CGImageRef image;
+
+                if ([namedImage isKindOfClass:[CUINamedLayerStack class]]) {
+                    CUINamedLayerStack *stack = (CUINamedLayerStack *)namedImage;
+                    if (!stack.layers.count) {
+                        return;
+                    }
+                    filename = [NSString stringWithFormat:@"%@.png", namedImage.name];
+                    image = stack.flattenedImage;
+                } else {
+                    filename = [self filenameForAssetNamed:namedImage.name scale:namedImage.scale presentationState:kCoreThemeStateNone preservingPathExtension:NO];
+                    image = namedImage.image;
+                }
+
+                if (!image) {
+                    return;
+                }
+
+                // when resource constrained and the catalog contains retina images, only load retina images
+                if (cachedHasRetinaContent() && self.resourceConstrained && namedImage.scale < 2) {
+                    return;
+                }
+
+                NSBitmapImageRep *imageRep = [[NSBitmapImageRep alloc] initWithCGImage:image];
+                imageRep.size = namedImage.size;
+
+                NSDictionary *desc = [self imageDescriptionWithName:namedImage.name filename:filename representation:imageRep];
+                if (!desc || progress.cancelled) {
+                    return;
+                }
+                [mutableImages addObject:desc];
+            }}];
         }
     }
 
-    __weak typeof(self) weakSelf = self;
-    
-    dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
-        // bundle is nil for some reason
-        if (!catalogPath) {
-            dispatch_async(dispatch_get_main_queue(), ^{
-                self.error = [NSError errorWithDomain:kAssetCatalogReaderErrorDomain code:0 userInfo:@{NSLocalizedDescriptionKey: @"Unable to find asset catalog path"}];
-                callback();
-            });
-            
-            return;
-        }
-        
-        NSError *catalogError;
-        self.catalog = [[CUICatalog alloc] initWithURL:[NSURL fileURLWithPath:catalogPath] error:&catalogError];
-        if (catalogError) {
-            dispatch_async(dispatch_get_main_queue(), ^{
-                self.error = catalogError;
-                callback();
-            });
-            
-            return;
-        }
-        
-        if ([self isProThemeStoreAtPath:catalogPath]) {
-            NSError *error = [NSError errorWithDomain:kAssetCatalogReaderErrorDomain code:1 userInfo:@{NSLocalizedDescriptionKey: @"Pro asset catalogs are not supported"}];
-            dispatch_async(dispatch_get_main_queue(), ^{
-                self.error = error;
-                callback();
-            });
-            
-            return;
-        }
-        
-        if (self.distinguishCatalogsFromThemeStores) {
-            if (!self.catalog.allImageNames.count || ![self.catalog respondsToSelector:@selector(imageWithName:scaleFactor:)]) {
-                // CAR is a theme file not an asset catalog
-                return [self readThemeStoreWithCompletionHandler:callback progressHandler:progressCallback];
-            }
-        } else {
-            return [self readThemeStoreWithCompletionHandler:callback progressHandler:progressCallback];
-        }
-        
-        weakSelf.totalNumberOfAssets = self.catalog.allImageNames.count;
-        
-        // limits the total items to be read to the total number of images or the max count set for a resource constrained read
-        totalItemCount = weakSelf.resourceConstrained ? MIN(maxItemCount, weakSelf.catalog.allImageNames.count) : weakSelf.catalog.allImageNames.count;
-        
-        for (NSString *imageName in self.catalog.allImageNames) {
-            if (weakSelf.resourceConstrained && loadedItemCount >= totalItemCount) break;
-            
-            dispatch_async(dispatch_get_main_queue(), ^{
-                double loadedFraction = (double)loadedItemCount / (double)totalItemCount;
-                if (progressCallback) progressCallback(loadedFraction);
-            });
-            
-            for (CUINamedImage *namedImage in [self imagesNamed:imageName]) {
-                if (self.cancelled) return;
-                
-                @autoreleasepool {
-                    if (namedImage == nil) {
-                        loadedItemCount++;
-                        continue;
-                    }
-
-                    if ([namedImage isKindOfClass:[CUINamedData class]]) {
-                        loadedItemCount++;
-                        continue;
-                    }
-
-                    NSString *filename;
-                    CGImageRef image;
-
-                    if ([namedImage isKindOfClass:[CUINamedLayerStack class]]) {
-                        CUINamedLayerStack *stack = (CUINamedLayerStack *)namedImage;
-                        if (!stack.layers.count) {
-                            loadedItemCount++;
-                            continue;
-                        }
-                        
-                        filename = [NSString stringWithFormat:@"%@.png", namedImage.name];
-                        image = stack.flattenedImage;
-                    } else {
-                        filename = [self filenameForAssetNamed:namedImage.name scale:namedImage.scale presentationState:kCoreThemeStateNone];
-                        image = namedImage.image;
-                    }
-                    
-                    if (image == nil) {
-                        loadedItemCount++;
-                        continue;
-                    }
-                    
-                    // when resource constrained and the catalog contains retina images, only load retina images
-                    if ([self catalogHasRetinaContent] && weakSelf.resourceConstrained && namedImage.scale < 2) {
-                        continue;
-                    }
-                    
-                    NSBitmapImageRep *imageRep = [[NSBitmapImageRep alloc] initWithCGImage:image];
-                    imageRep.size = namedImage.size;
-                    
-                    NSDictionary *desc = [self imageDescriptionWithName:namedImage.name filename:filename representation:imageRep];
-                    if (!desc) {
-                        loadedItemCount++;
-                        return;
-                    }
-                    
-                    if (self.cancelled) return;
-                    
-                    [self.mutableImages addObject:desc];
-                    
-                    if (self.cancelled) return;
-                    
-                    loadedItemCount++;
-                }
-            }
-        }
-        
-        // we've got no images for some reason (the console will usually contain some information from CoreUI as to why)
-        if (!self.images.count) {
-            dispatch_async(dispatch_get_main_queue(), ^{
-                self.error = [NSError errorWithDomain:kAssetCatalogReaderErrorDomain code:0 userInfo:@{NSLocalizedDescriptionKey: @"Failed to load images"}];
-                callback();
-            });
-            
-            return;
-        }
-        
+    // we've got no images for some reason (the console will usually contain some information from CoreUI as to why)
+    if (!mutableImages.count) {
+        NSError *error = [NSError errorWithDomain:kAssetCatalogReaderErrorDomain code:kAssetCatalogReaderErrorNoImagesFound userInfo:@{NSLocalizedDescriptionKey: @"Failed to load images"}];
         dispatch_async(dispatch_get_main_queue(), ^{
-            callback();
+            callback(nil, 0, error);
         });
+        return;
+    }
+
+    NSArray *images = [mutableImages copy];
+    dispatch_async(dispatch_get_main_queue(), ^{
+        [self.loadedCatalogs addObject:catalog];
+        callback(images, totalNumberOfAssets, nil);
     });
 }
 
-- (void)readThemeStoreWithCompletionHandler:(void (^__nonnull)(void))callback progressHandler:(void (^__nullable)(double progress))progressCallback
-{
-    uint64 realTotalItemCount = [self.catalog _themeStore].themeStore.allAssetKeys.count;
-    __block uint64 loadedItemCount = 0;
-    
+extern CGDataProviderRef CGPDFDocumentGetDataProvider(CGPDFDocumentRef);
+
+- (void)readThemeStore:(CUICatalog *)catalog updatingProgress:(NSProgress *)progress completionHandler:(AssetCatalogReaderCompletionHandler)callback {
+    CUIStructuredThemeStore *themeStore = [catalog _themeStore];
+    int64_t realTotalItemCount = themeStore.themeStore.allAssetKeys.count;
     // limits the total items to be read to the total number of images or the max count set for a resource constrained read
-    __block uint64 totalItemCount = self.resourceConstrained ? MIN(_maxCount, realTotalItemCount) : realTotalItemCount;
-    
-    _totalNumberOfAssets = [self.catalog _themeStore].themeStore.allAssetKeys.count;
+    int64_t totalItemCount = self.resourceConstrained ? MIN(_maxCount, realTotalItemCount) : realTotalItemCount;
+    NSMutableArray *mutableImages = [NSMutableArray arrayWithCapacity:totalItemCount];
+    NSArray *assetKeys = [themeStore.themeStore.allAssetKeys subarrayWithRange:NSMakeRange(0, totalItemCount)];
 
-    __weak typeof(self) weakSelf = self;
+    progress.totalUnitCount = totalItemCount;
 
-    [[self.catalog _themeStore].themeStore.allAssetKeys enumerateObjectsWithOptions:0 usingBlock:^(CUIRenditionKey * _Nonnull key, NSUInteger idx, BOOL * _Nonnull stop) {
-        if (weakSelf.resourceConstrained && loadedItemCount >= totalItemCount) return;
-        
-        if (self.cancelled) return;
-        
-        dispatch_async(dispatch_get_main_queue(), ^{
-            double loadedFraction = (double)loadedItemCount / (double)totalItemCount;
-            if (progressCallback) progressCallback(loadedFraction);
-        });
-        
-        @try {
-            CUIThemeRendition *rendition = [[self.catalog _themeStore] renditionWithKey:key.keyList];
-            
-            // when resource constrained and the catalog contains retina images, only load retina images
-            if ([self catalogHasRetinaContent] && weakSelf.resourceConstrained && rendition.scale < 2) {
-                return;
-            }
-            
-            NSString *filename = [self filenameForAssetNamed:[self cleanupRenditionName:rendition.name] scale:rendition.scale presentationState:key.themeState];
-            
-            if (rendition.unslicedImage) {
-                NSBitmapImageRep *imageRep = [[NSBitmapImageRep alloc] initWithCGImage:rendition.unslicedImage];
-                imageRep.size = NSMakeSize(CGImageGetWidth(rendition.unslicedImage), CGImageGetHeight(rendition.unslicedImage));
-                
-                NSDictionary *desc = [self imageDescriptionWithName:rendition.name filename:filename representation:imageRep];
-                
-                BOOL ignore = [filename containsString:@"ZZPackedAsset"] && self.ignorePackedAssets;
-                
-                if (!desc || ignore) {
-                    loadedItemCount++;
+    __block int hasRetinaContentCacheStatus = -1;
+    BOOL(^cachedHasRetinaContent)(void) = ^BOOL{
+        if (hasRetinaContentCacheStatus == -1) {
+            hasRetinaContentCacheStatus = [self catalogHasRetinaContent:catalog];
+        }
+        return !!hasRetinaContentCacheStatus;
+    };
+
+    for (CUIRenditionKey *key in assetKeys) {
+        if (progress.cancelled) {
+            return;
+        }
+
+        [progress performAsCurrentWithPendingUnitCount:1 usingBlock:^{ @autoreleasepool {
+            @try {
+                CUIThemeRendition *rendition = [themeStore renditionWithKey:key.keyList];
+
+                // when resource constrained and the catalog contains retina images, only load retina images
+                if (cachedHasRetinaContent() && self.resourceConstrained && rendition.scale < 2) {
                     return;
                 }
-                
-                if (self.cancelled) return;
-                
-                [self.mutableImages addObject:desc];
-            } else {
-                NSLog(@"The rendition %@ doesn't have an image, It is probably an effect or material.", rendition.name);
+
+                if (self.ignorePackedAssets && [rendition.name containsString:@"ZZPackedAsset"]) {
+                    return;
+                }
+
+                NSString *filename;
+                NSImageRep *imageRep;
+                if (rendition.unslicedImage) {
+                    filename = [self filenameForAssetNamed:rendition.name scale:rendition.scale presentationState:key.themeState preservingPathExtension:NO];
+                    imageRep = [[NSBitmapImageRep alloc] initWithCGImage:rendition.unslicedImage];
+                } else if (rendition.pdfDocument) {
+                    filename = [self filenameForAssetNamed:rendition.name scale:rendition.scale presentationState:key.themeState preservingPathExtension:YES];
+
+                    CGDataProviderRef dataProvider = CGPDFDocumentGetDataProvider(rendition.pdfDocument);
+                    CFDataRef data = CGDataProviderCopyData(dataProvider);
+                    imageRep = [[NSPDFImageRep alloc] initWithData:(__bridge_transfer NSData *)data];
+                } else {
+                    NSLog(@"The rendition %@ doesn't have an image, It is probably an effect or material.", rendition.name);
+                }
+
+                if (!filename || !imageRep || progress.cancelled) {
+                    return;
+                }
+
+                NSDictionary *desc = [self imageDescriptionWithName:rendition.name filename:filename representation:imageRep];
+                [mutableImages addObject:desc];
+            } @catch (NSException *exception) {
+                NSLog(@"Exception while reading theme store: %@", exception);
             }
-            
-            loadedItemCount++;
-        } @catch (NSException *exception) {
-            NSLog(@"Exception while reading theme store: %@", exception);
-        }
-    }];
-    
+        }}];
+    }
+
+    NSArray *images = [mutableImages copy];
     dispatch_async(dispatch_get_main_queue(), ^{
-        callback();
+        [self.loadedCatalogs addObject:catalog];
+        callback(images, realTotalItemCount, nil);
     });
 }
 
@@ -318,14 +283,14 @@ NSString * const kAssetCatalogReaderErrorDomain = @"br.com.guilhermerambo.AssetC
     return newImage;
 }
 
-- (BOOL)isProThemeStoreAtPath:(NSString *)path
+- (BOOL)isProThemeStoreAtURL:(NSURL *)url
 {
     static const int proThemeTokenLength = 18;
     static const char proThemeToken[proThemeTokenLength] = { 0x50,0x72,0x6F,0x54,0x68,0x65,0x6D,0x65,0x44,0x65,0x66,0x69,0x6E,0x69,0x74,0x69,0x6F,0x6E };
-    
+
     @try {
-        NSData *catalogData = [[NSData alloc] initWithContentsOfFile:path options:NSDataReadingMappedAlways|NSDataReadingUncached error:nil];
-        
+        NSData *catalogData = [[NSData alloc] initWithContentsOfURL:url options:NSDataReadingMappedAlways|NSDataReadingUncached error:nil];
+
         NSData *proThemeTokenData = [NSData dataWithBytes:(const void *)proThemeToken length:proThemeTokenLength];
         if ([catalogData rangeOfData:proThemeTokenData options:0 range:NSMakeRange(0, catalogData.length)].location != NSNotFound) {
             return YES;
@@ -338,21 +303,21 @@ NSString * const kAssetCatalogReaderErrorDomain = @"br.com.guilhermerambo.AssetC
     }
 }
 
-- (NSArray <CUINamedImage *> *)imagesNamed:(NSString *)name
+- (NSArray <CUINamedImage *> *)imagesNamed:(NSString *)name fromCatalog:(CUICatalog *)catalog
 {
     NSMutableArray <CUINamedImage *> *images = [[NSMutableArray alloc] initWithCapacity:3];
-    
+
     for (NSNumber *factor in @[@1,@2,@3]) {
-        CUINamedImage *image = [self.catalog imageWithName:name scaleFactor:factor.doubleValue];
+        CUINamedImage *image = [catalog imageWithName:name scaleFactor:factor.doubleValue];
         if (!image || image.scale != factor.doubleValue) continue;
-        
+
         [images addObject:image];
     }
-    
+
     return images;
 }
 
-- (NSDictionary *)imageDescriptionWithName:(NSString *)name filename:(NSString *)filename representation:(NSBitmapImageRep *)imageRep
+- (NSDictionary *)imageDescriptionWithName:(NSString *)name filename:(NSString *)filename representation:(NSImageRep *)imageRep
 {
     if (_resourceConstrained) {
         return @{
@@ -361,16 +326,15 @@ NSString * const kAssetCatalogReaderErrorDomain = @"br.com.guilhermerambo.AssetC
                  kACSImageRepKey: imageRep
                  };
     } else {
-        NSData *pngData = [imageRep representationUsingType:NSPNGFileType properties:@{NSImageInterlaced:@(NO)}];
-        
-        if (!pngData.length) {
-            NSLog(@"Unable to get PNG data from rendition named %@", name);
-            return nil;
-        }
-        
-        NSImage *originalImage = [[NSImage alloc] initWithData:pngData];
+        NSImage *originalImage = [[NSImage alloc] initWithSize:CGSizeZero];
+        [originalImage addRepresentation:imageRep];
+
         NSImage *thumbnail = [self constrainImage:originalImage toSize:self.thumbnailSize];
-        
+
+        CGImageRef cgImage = [originalImage CGImageForProposedRect:NULL context:nil hints:nil];
+        NSBitmapImageRep *bitmapImageRep = [[NSBitmapImageRep alloc] initWithCGImage:cgImage];
+        NSData *pngData = [bitmapImageRep representationUsingType:NSBitmapImageFileTypePNG properties:@{NSImageInterlaced:@(NO)}];
+
         return @{
                  kACSNameKey : name,
                  kACSImageKey : originalImage,
@@ -381,47 +345,55 @@ NSString * const kAssetCatalogReaderErrorDomain = @"br.com.guilhermerambo.AssetC
     }
 }
 
-- (NSString *)cleanupRenditionName:(NSString *)name
+- (NSString *)filenameForAssetNamed:(NSString *)name scale:(CGFloat)scale presentationState:(NSInteger)presentationState preservingPathExtension:(BOOL)preservingPathExtension
 {
-    NSArray *components = [name.stringByDeletingPathExtension componentsSeparatedByString:@"@"];
-    
-    return components.firstObject;
-}
-
-- (NSString *)filenameForAssetNamed:(NSString *)name scale:(CGFloat)scale presentationState:(NSInteger)presentationState
-{
+    NSString *pathExtension = (preservingPathExtension ? name.pathExtension : nil) ?: @"png";
+    NSString *baseName = [[name.stringByDeletingPathExtension componentsSeparatedByString:@"@"] firstObject];
     if (scale > 1.0) {
         if (presentationState != kCoreThemeStateNone) {
-            return [NSString stringWithFormat:@"%@_%@@%.0fx.png", name, themeStateNameForThemeState(presentationState), scale];
+            return [NSString stringWithFormat:@"%@_%@@%.0fx.%@", baseName, themeStateNameForThemeState(presentationState), scale, pathExtension];
         } else {
-            return [NSString stringWithFormat:@"%@@%.0fx.png", name, scale];
+            return [NSString stringWithFormat:@"%@@%.0fx.%@", baseName, scale, pathExtension];
         }
     } else {
         if (presentationState != kCoreThemeStateNone) {
-            return [NSString stringWithFormat:@"%@_%@.png", name, themeStateNameForThemeState(presentationState)];
+            return [NSString stringWithFormat:@"%@_%@.%@", baseName, themeStateNameForThemeState(presentationState), pathExtension];
         } else {
-            return [NSString stringWithFormat:@"%@.png", name];
+            return [NSString stringWithFormat:@"%@.%@", baseName, pathExtension];
         }
     }
 }
 
-- (BOOL)catalogHasRetinaContent
+- (NSString *)filenameForAssetNamed:(NSString *)name scale:(CGFloat)scale presentationState:(NSInteger)presentationState DEPRECATED_ATTRIBUTE
 {
-    if (!_computedCatalogHasRetinaContent) {
-        for (NSString *name in self.catalog.allImageNames) {
-            for (CUINamedImage *namedImage in [self imagesNamed:name]) {
-                if (namedImage.scale > 1) {
-                    _catalogHasRetinaContent = YES;
-                    break;
-                }
-            }
-            if (_catalogHasRetinaContent) break;
+    NSString *pathExtension = name.pathExtension ?: @"png";
+    NSString *baseName = [[name.stringByDeletingPathExtension componentsSeparatedByString:@"@"] firstObject];
+    if (scale > 1.0) {
+        if (presentationState != kCoreThemeStateNone) {
+            return [NSString stringWithFormat:@"%@_%@@%.0fx.%@", baseName, themeStateNameForThemeState(presentationState), scale, pathExtension];
+        } else {
+            return [NSString stringWithFormat:@"%@@%.0fx.%@", baseName, scale, pathExtension];
         }
-        
-        _computedCatalogHasRetinaContent = YES;
+    } else {
+        if (presentationState != kCoreThemeStateNone) {
+            return [NSString stringWithFormat:@"%@_%@.%@", baseName, themeStateNameForThemeState(presentationState), pathExtension];
+        } else {
+            return [NSString stringWithFormat:@"%@.%@", baseName, pathExtension];
+        }
     }
-    
-    return _catalogHasRetinaContent;
+}
+
+- (BOOL)catalogHasRetinaContent:(CUICatalog *)catalog
+{
+    for (NSString *name in catalog.allImageNames) {
+        for (CUINamedImage *namedImage in [self imagesNamed:name fromCatalog:catalog]) {
+            if (namedImage.scale > 1) {
+                return YES;
+            }
+        }
+    }
+
+    return NO;
 }
 
 @end

@@ -12,10 +12,11 @@ import ACS
 class AssetCatalogDocument: NSDocument {
 
     fileprivate var reader: AssetCatalogReader!
-    
-    override init() {
-        super.init()
-        // Add your subclass-specific initialization here.
+
+    var progress: Progress?
+
+    deinit {
+        progress?.cancel()
     }
 
     override func makeWindowControllers() {
@@ -23,14 +24,12 @@ class AssetCatalogDocument: NSDocument {
         let windowController = storyboard.instantiateController(withIdentifier: "Document Window Controller") as! NSWindowController
         self.addWindowController(windowController)
         
-        if #available(OSX 10.12, *) {
-            windowController.window?.tabbingIdentifier = "ACTWindow"
-            windowController.window?.tabbingMode = .preferred
-        }
-        
-        NotificationCenter.default.addObserver(forName: NSWindow.willCloseNotification, object: windowController.window, queue: OperationQueue.main) { _ in
-            if self.reader != nil { self.reader.cancelReading() }
-        }
+        windowController.window?.tabbingIdentifier = "ACTWindow"
+        windowController.window?.tabbingMode = .preferred
+
+        NotificationCenter.default.addObserver(self, selector: #selector(onWindowWillClose), name: NSWindow.willCloseNotification, object: windowController.window)
+
+        imagesViewController?.progress = progress
     }
     
     fileprivate var imagesViewController: ImagesViewController? {
@@ -43,23 +42,19 @@ class AssetCatalogDocument: NSDocument {
         
         reader.distinguishCatalogsFromThemeStores = Preferences.shared[.distinguishCatalogsAndThemeStores]
         reader.ignorePackedAssets = Preferences.shared[.ignorePackedAssets]
-        
-        reader.read(completionHandler: didFinishReading, progressHandler: updateProgress)
-    }
-    
-    fileprivate func updateProgress(_ progress: Double) {
-        imagesViewController?.loadProgress = progress
-    }
-    
-    fileprivate func didFinishReading() {
-        guard !reader.cancelled else { return }
-        
-        if let error = reader.error {
-            imagesViewController?.error = error as NSError?
-        } else {
-            imagesViewController?.images = reader.images
+
+        progress = reader.read { [weak self] (images, _, error) in
+            guard let self = self else { return }
+            if let error = error {
+                self.imagesViewController?.error = error
+            } else {
+                self.imagesViewController?.images = images ?? []
+            }
         }
     }
 
-}
+    @objc private func onWindowWillClose(_ note: Notification) {
+        progress?.cancel()
+    }
 
+}

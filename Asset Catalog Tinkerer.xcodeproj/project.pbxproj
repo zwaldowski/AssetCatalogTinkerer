@@ -38,7 +38,6 @@
 		DDC06BB11CA8CFB900B6A9F3 /* ImageCollectionViewItem.xib in Resources */ = {isa = PBXBuildFile; fileRef = DDC06BAF1CA8CFB900B6A9F3 /* ImageCollectionViewItem.xib */; };
 		DDDDE5C91CA96EF400B353D3 /* DocumentController.swift in Sources */ = {isa = PBXBuildFile; fileRef = DDDDE5C81CA96EF400B353D3 /* DocumentController.swift */; };
 		DDDDE5CB1CA97C0300B353D3 /* QuickLookableCollectionView.swift in Sources */ = {isa = PBXBuildFile; fileRef = DDDDE5CA1CA97C0300B353D3 /* QuickLookableCollectionView.swift */; };
-		DDF7E41F22CC0AB600EF1965 /* NSPasteboard+Filenames.m in Sources */ = {isa = PBXBuildFile; fileRef = DDF7E41E22CC0AB600EF1965 /* NSPasteboard+Filenames.m */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -128,8 +127,6 @@
 		DDC06BAF1CA8CFB900B6A9F3 /* ImageCollectionViewItem.xib */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = file.xib; path = ImageCollectionViewItem.xib; sourceTree = "<group>"; };
 		DDDDE5C81CA96EF400B353D3 /* DocumentController.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = DocumentController.swift; sourceTree = "<group>"; };
 		DDDDE5CA1CA97C0300B353D3 /* QuickLookableCollectionView.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = QuickLookableCollectionView.swift; sourceTree = "<group>"; };
-		DDF7E41D22CC0AB600EF1965 /* NSPasteboard+Filenames.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = "NSPasteboard+Filenames.h"; sourceTree = "<group>"; };
-		DDF7E41E22CC0AB600EF1965 /* NSPasteboard+Filenames.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = "NSPasteboard+Filenames.m"; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -166,8 +163,6 @@
 			children = (
 				DDADF2AD2026678C003CB15D /* NSImage+BrightnessDetection.h */,
 				DDADF2AE2026678C003CB15D /* NSImage+BrightnessDetection.m */,
-				DDF7E41D22CC0AB600EF1965 /* NSPasteboard+Filenames.h */,
-				DDF7E41E22CC0AB600EF1965 /* NSPasteboard+Filenames.m */,
 			);
 			name = Util;
 			sourceTree = "<group>";
@@ -443,7 +438,7 @@
 					};
 					DDC06B711CA8BCF300B6A9F3 = {
 						CreatedOnToolsVersion = 7.3;
-						DevelopmentTeam = 8C7439RJLG;
+						DevelopmentTeam = 53A8EFRS44;
 						LastSwiftMigration = 0800;
 						ProvisioningStyle = Automatic;
 					};
@@ -579,7 +574,6 @@
 				DDC06B7A1CA8BCF300B6A9F3 /* AssetCatalogDocument.swift in Sources */,
 				DD8118B31E5DC4DD00426746 /* Preferences.swift in Sources */,
 				DDA691CB1CFA02CA00583328 /* MainWindowController.swift in Sources */,
-				DDF7E41F22CC0AB600EF1965 /* NSPasteboard+Filenames.m in Sources */,
 				DDDDE5C91CA96EF400B353D3 /* DocumentController.swift in Sources */,
 				DDDDE5CB1CA97C0300B353D3 /* QuickLookableCollectionView.swift in Sources */,
 			);
@@ -637,7 +631,7 @@
 				INFOPLIST_FILE = ACS/Info.plist;
 				INSTALL_PATH = "$(LOCAL_LIBRARY_DIR)/Frameworks";
 				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/../Frameworks @loader_path/Frameworks";
-				MACOSX_DEPLOYMENT_TARGET = 10.12;
+				MACOSX_DEPLOYMENT_TARGET = 10.14;
 				PRODUCT_BUNDLE_IDENTIFIER = br.com.guilhermerambo.ACS;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SKIP_INSTALL = YES;
@@ -668,7 +662,7 @@
 				INFOPLIST_FILE = ACS/Info.plist;
 				INSTALL_PATH = "$(LOCAL_LIBRARY_DIR)/Frameworks";
 				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/../Frameworks @loader_path/Frameworks";
-				MACOSX_DEPLOYMENT_TARGET = 10.12;
+				MACOSX_DEPLOYMENT_TARGET = 10.14;
 				PRODUCT_BUNDLE_IDENTIFIER = br.com.guilhermerambo.ACS;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SKIP_INSTALL = YES;
@@ -688,7 +682,7 @@
 				INFOPLIST_FILE = AssetCatalog/Info.plist;
 				INSTALL_PATH = "";
 				LD_RUNPATH_SEARCH_PATHS = "@loader_path/../../../../../Frameworks";
-				MACOSX_DEPLOYMENT_TARGET = 10.12;
+				MACOSX_DEPLOYMENT_TARGET = 10.13;
 				PRODUCT_BUNDLE_IDENTIFIER = br.com.guilhermerambo.AssetCatalog;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				WRAPPER_EXTENSION = qlgenerator;
@@ -705,7 +699,7 @@
 				INFOPLIST_FILE = AssetCatalog/Info.plist;
 				INSTALL_PATH = "";
 				LD_RUNPATH_SEARCH_PATHS = "@loader_path/../../../../../Frameworks";
-				MACOSX_DEPLOYMENT_TARGET = 10.12;
+				MACOSX_DEPLOYMENT_TARGET = 10.13;
 				PRODUCT_BUNDLE_IDENTIFIER = br.com.guilhermerambo.AssetCatalog;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				WRAPPER_EXTENSION = qlgenerator;
@@ -828,7 +822,7 @@
 				CODE_SIGN_IDENTITY = "Mac Developer";
 				COMBINE_HIDPI_IMAGES = YES;
 				CURRENT_PROJECT_VERSION = 260;
-				DEVELOPMENT_TEAM = 8C7439RJLG;
+				DEVELOPMENT_TEAM = 53A8EFRS44;
 				ENABLE_HARDENED_RUNTIME = YES;
 				FRAMEWORK_SEARCH_PATHS = (
 					"$(inherited)",
@@ -856,7 +850,7 @@
 				CODE_SIGN_IDENTITY = "Mac Developer";
 				COMBINE_HIDPI_IMAGES = YES;
 				CURRENT_PROJECT_VERSION = 260;
-				DEVELOPMENT_TEAM = 8C7439RJLG;
+				DEVELOPMENT_TEAM = 53A8EFRS44;
 				ENABLE_HARDENED_RUNTIME = YES;
 				FRAMEWORK_SEARCH_PATHS = (
 					"$(inherited)",
